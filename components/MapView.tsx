@@ -79,25 +79,11 @@ export default function MapView() {
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: {
-        version: 8,
-        sources: {
-          carto: {
-            type: "raster",
-            tiles: [
-              "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-              "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-              "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-              "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-            ],
-            tileSize: 256,
-            attribution:
-              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-          },
-        },
-        layers: [{ id: "carto-base", type: "raster", source: "carto" }],
-        glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-      },
+      // OpenFreeMap's hosted "positron" style: genuinely free vector tiles,
+      // no API key, no rate limit (unlike CARTO's raster tiles, which
+      // started requiring a key on their free tier). Ships its own
+      // glyphs/sprite, so no separate glyphs URL is needed.
+      style: "https://tiles.openfreemap.org/styles/positron",
       center: [centerLon, centerLat],
       zoom: 12.3,
       minZoom: 11,
