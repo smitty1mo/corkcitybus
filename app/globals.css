@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+  overscroll-behavior-y: none;
+}
+
+body {
+  background: #f7f7f8;
+  color: #111114;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* iOS-style momentum scrolling for sheets/lists */
+.momentum-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+.maplibregl-popup-content {
+  border-radius: 14px !important;
+  box-shadow: 0 8px 30px rgba(20, 20, 30, 0.18) !important;
+  padding: 0 !important;
+  font-family: inherit !important;
+}
+
+.maplibregl-popup-close-button {
+  font-size: 18px !important;
+  padding: 6px 10px !important;
+  color: #8a8a8e !important;
+}
+
+.maplibregl-ctrl-attrib {
+  border-radius: 8px !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: #6b6b70 !important;
+}
