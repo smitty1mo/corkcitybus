@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import type { StaticRoute } from "@/lib/types";
 
 export default function RouteFilterSheet({
@@ -44,8 +45,9 @@ export default function RouteFilterSheet({
         </span>
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-40 flex flex-col justify-end">
+      {open &&
+        createPortal(
+          <div className="fixed inset-0 z-40 flex flex-col justify-end">
           <button
             aria-label="Close route filter"
             onClick={() => setOpen(false)}
@@ -120,8 +122,9 @@ export default function RouteFilterSheet({
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body
+        )}
     </>
   );
 }
