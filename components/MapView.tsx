@@ -138,8 +138,35 @@ export default function MapView() {
     if (!map || !mapLoaded || !fullRoutesGeoJSON || !fullStopsGeoJSON || sourcesReadyRef.current) {
       return;
     }
-    sourcesReadyRef.current = true;
 
+    // mapLoaded can go true from the fallback timer before a *remote* style
+    // (like OpenFreeMap's style.json) has actually finished loading -
+    // addSource/addLayer throw if called too early. Poll isStyleLoaded()
+    // directly rather than an "idle" listener, which React's effect
+    // double-invoke (dev StrictMode: mount -> cleanup -> mount) can tear
+    // down before it ever fires.
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function trySetup() {
+      if (cancelled || sourcesReadyRef.current) return;
+      if (!map!.isStyleLoaded()) {
+        timer = setTimeout(trySetup, 150);
+        return;
+      }
+      sourcesReadyRef.current = true;
+      addSourcesAndLayers(map!);
+    }
+
+    trySetup();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [mapLoaded, fullRoutesGeoJSON, fullStopsGeoJSON]);
+
+  function addSourcesAndLayers(map: MapLibreMap) {
     map.addSource("routes", { type: "geojson", data: emptyFC() });
     map.addSource("stops", { type: "geojson", data: emptyFC() });
     map.addSource("buses", { type: "geojson", data: emptyFC() });
@@ -234,7 +261,7 @@ export default function MapView() {
       const features = map.queryRenderedFeatures(e.point, { layers: [...INTERACTIVE_LAYERS] });
       map.getCanvas().style.cursor = features.length > 0 ? "pointer" : "";
     });
-  }, [mapLoaded, fullRoutesGeoJSON, fullStopsGeoJSON]);
+  }
 
   // ---- Update route/stop sources when filter selection changes ----
   const visibleRouteLineIds = useMemo(() => {

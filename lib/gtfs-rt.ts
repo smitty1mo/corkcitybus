@@ -104,24 +104,48 @@ function resolveNextStops(
 ): PredictedStopArrival[] {
   let upcoming: { stopId: string; stopSequence: number; absoluteArrivalUnix: number | null }[];
 
+  const stopCoords = getStopCoords();
+
   if (tripUpdate && tripUpdate.stops.length > 0) {
     upcoming = tripUpdate.stops;
   } else {
     const pattern = getRoutePattern(routeId, directionId);
     if (!pattern || pattern.stops.length === 0) return [];
-    let startIdx = 0;
+
+    // stop_sequence is 1-based in GTFS, so 0 means "not provided" rather
+    // than "the first stop" - trusting it here previously showed the very
+    // start of the route as the "next stop" for any vehicle whose feed
+    // entry didn't carry a real sequence number.
+    let startIdx: number | null = null;
     if (currentStopId) {
       const idx = pattern.stops.findIndex((s) => s.stopId === currentStopId);
       if (idx >= 0) startIdx = idx;
-    } else if (currentStopSequence !== null) {
+    }
+    if (startIdx === null && currentStopSequence !== null && currentStopSequence > 0) {
       startIdx = Math.max(0, Math.min(pattern.stops.length - 1, currentStopSequence - 1));
     }
+    if (startIdx === null) {
+      // No usable position hint from the feed at all - fall back to the
+      // pattern stop closest to the vehicle's live GPS position rather
+      // than defaulting to the start of the route.
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      pattern.stops.forEach((s, i) => {
+        const c = stopCoords.get(s.stopId);
+        if (!c) return;
+        const d = haversineMeters(vehicleLat, vehicleLon, c.lat, c.lon);
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = i;
+        }
+      });
+      startIdx = bestIdx;
+    }
+
     upcoming = pattern.stops
       .slice(startIdx)
-      .map((s, i) => ({ stopId: s.stopId, stopSequence: startIdx + i + 1, absoluteArrivalUnix: null }));
+      .map((s, i) => ({ stopId: s.stopId, stopSequence: startIdx! + i + 1, absoluteArrivalUnix: null }));
   }
-
-  const stopCoords = getStopCoords();
   const speedMps = estimatedSpeed(vehicleSpeed);
 
   let cumulativeMeters = 0;
