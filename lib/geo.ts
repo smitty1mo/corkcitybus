@@ -44,6 +44,31 @@ export function interpolateBearing(a: number, b: number, t: number): number {
   return (a + diff * clamped + 360) % 360;
 }
 
+/**
+ * Dead-reckoning: projects a point forward along a bearing at a given speed
+ * for a duration, using a flat-earth approximation (accurate to a few
+ * centimetres over the few-hundred-metre distances this is used for). Lets
+ * a bus keep drifting forward at its last known heading/speed once it's
+ * caught up to the latest real GPS fix, rather than freezing in place while
+ * waiting for the next one.
+ */
+export function projectForward(
+  lat: number,
+  lon: number,
+  bearingDeg: number,
+  speedMps: number,
+  seconds: number
+): [number, number] {
+  const distanceMeters = speedMps * seconds;
+  const R = 6371000;
+  const bearingRad = (bearingDeg * Math.PI) / 180;
+  const dLat = ((distanceMeters * Math.cos(bearingRad)) / R) * (180 / Math.PI);
+  const dLon =
+    ((distanceMeters * Math.sin(bearingRad)) / (R * Math.cos((lat * Math.PI) / 180))) *
+    (180 / Math.PI);
+  return [lat + dLat, lon + dLon];
+}
+
 export function bearingBetween(
   lat1: number,
   lon1: number,

@@ -4,9 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import type { LiveFeedResponse, LiveVehicle } from "./types";
 import { CLIENT_POLL_INTERVAL_MS } from "./constants";
 
+export interface VehicleFix {
+  lat: number;
+  lon: number;
+  bearing: number | null;
+  /** When the vehicle itself reported this fix (unix seconds) - used only for staleness. */
+  vehicleTimestamp: number;
+  /** When *this client* received the fix (unix seconds, Date.now()/1000) - the actual
+   * animation clock. By the time a fix reaches the browser, NTA's own reporting lag
+   * plus our 61s server throttle plus the client poll interval can already exceed the
+   * gap between two consecutive vehicleTimestamps, so interpolating against
+   * vehicleTimestamp made every update arrive already-in-the-past (t clamped to 1
+   * immediately - the bus would snap instead of glide). Interpolating against
+   * receivedAt instead guarantees a real window to animate through. */
+  receivedAt: number;
+}
+
 export interface VehicleAnim {
-  prev: { lat: number; lon: number; bearing: number | null; timestamp: number };
-  curr: { lat: number; lon: number; bearing: number | null; timestamp: number };
+  prev: VehicleFix;
+  curr: VehicleFix;
   vehicle: LiveVehicle;
 }
 
@@ -40,15 +56,16 @@ export function useLiveVehicles() {
 
         const map = animRef.current;
         const seen = new Set<string>();
+        const receivedAt = Date.now() / 1000;
         for (const v of data.vehicles) {
           seen.add(v.vehicleId);
           const existing = map.get(v.vehicleId);
-          if (!existing || existing.curr.timestamp !== v.timestamp) {
+          if (!existing || existing.curr.vehicleTimestamp !== v.timestamp) {
             map.set(v.vehicleId, {
               prev: existing
                 ? existing.curr
-                : { lat: v.lat, lon: v.lon, bearing: v.bearing, timestamp: v.timestamp - 1 },
-              curr: { lat: v.lat, lon: v.lon, bearing: v.bearing, timestamp: v.timestamp },
+                : { lat: v.lat, lon: v.lon, bearing: v.bearing, vehicleTimestamp: v.timestamp, receivedAt: receivedAt - 1 },
+              curr: { lat: v.lat, lon: v.lon, bearing: v.bearing, vehicleTimestamp: v.timestamp, receivedAt },
               vehicle: v,
             });
           } else {
