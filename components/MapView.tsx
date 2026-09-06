@@ -205,7 +205,7 @@ export default function MapView() {
       source: "buses",
       layout: {
         "icon-image": "bus-icon",
-        "icon-size": 0.5,
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.6, 15, 0.85, 18, 1.05],
         "icon-rotate": ["get", "bearing"],
         "icon-rotation-alignment": "map",
         "icon-allow-overlap": true,
