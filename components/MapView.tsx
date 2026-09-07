@@ -19,10 +19,16 @@ import StatusBanner from "./StatusBanner";
 
 const INTERACTIVE_LAYERS = ["buses-icon", "stops-circle", "route-lines"] as const;
 const BUS_RENDER_INTERVAL_MS = 100; // 10fps client-side interpolation redraw
-// Once a bus has caught up to its latest known fix, keep it drifting forward
-// at its last reported speed/heading for up to this long before freezing -
-// a real GPS update almost always arrives well before this.
-const MAX_EXTRAPOLATION_SEC = 45;
+// How long to visually glide from a bus's previous position to a newly
+// received fix, once it arrives, rather than popping straight to it.
+const GLIDE_DURATION_SEC = 4;
+// After the glide finishes, keep drifting forward at the bus's last
+// reported speed/heading for up to this long before freezing. Server
+// throttle (61s) plus client poll interval (20s) means genuinely new fixes
+// can be ~80s apart, so this needs to comfortably cover that gap - capped
+// just under STALE_VEHICLE_AFTER_SECONDS so a bus only ever freezes once
+// the UI has already flagged it as stale (dimmed) anyway.
+const MAX_EXTRAPOLATION_SEC = 150;
 
 export default function MapView() {
   const { data } = useStaticData();
@@ -321,20 +327,22 @@ export default function MapView() {
         active.add(vehicle.routeId);
         if (!selectedRouteIds.has(vehicle.routeId)) continue;
 
-        // Interpolate against *when this client received* each fix, not the
-        // vehicle's own GTFS timestamp: NTA's reporting lag plus our 61s
-        // server throttle plus the client poll interval can already exceed
-        // the gap between two consecutive vehicle timestamps, so by the
-        // time an update reaches the browser it can already be "in the
-        // past" relative to itself - every update would snap instead of
-        // glide. receivedAt always has a real window to animate through.
-        const span = curr.receivedAt - prev.receivedAt;
+        // curr.receivedAt is stamped the instant a fix arrives, so by
+        // definition it's already "now or in the past" from then on - a
+        // window of [prev.receivedAt, curr.receivedAt] is always fully
+        // elapsed by the time we get to check it here, which would make
+        // every update pop straight to curr instead of gliding. Instead,
+        // animate forward from the moment curr arrived: glide from the old
+        // position to the new one over a short fixed duration, then dead-
+        // reckon onward using the vehicle's live speed/heading until the
+        // next real fix replaces curr.
+        const sinceUpdate = Math.max(0, nowSec - curr.receivedAt);
         let lat: number;
         let lon: number;
         let bearing: number;
 
-        if (span > 0 && nowSec < curr.receivedAt) {
-          const t = Math.max(0, Math.min(1, (nowSec - prev.receivedAt) / span));
+        if (sinceUpdate < GLIDE_DURATION_SEC) {
+          const t = sinceUpdate / GLIDE_DURATION_SEC;
           [lat, lon] = interpolateLatLon([prev.lat, prev.lon], [curr.lat, curr.lon], t);
           bearing = curr.bearing ?? prev.bearing ?? 0;
           if (prev.bearing != null && curr.bearing != null) {
@@ -343,11 +351,11 @@ export default function MapView() {
             bearing = bearingBetween(prev.lat, prev.lon, curr.lat, curr.lon);
           }
         } else {
-          // Caught up to the latest known fix - dead-reckon forward at the
-          // vehicle's last reported speed/heading rather than freezing, so
-          // it keeps drifting naturally until the next real update arrives.
+          // Glide finished - dead-reckon forward at the vehicle's last
+          // reported speed/heading rather than freezing, so it keeps
+          // drifting naturally until the next real update arrives.
           bearing = curr.bearing ?? prev.bearing ?? 0;
-          const overshootSec = Math.min(Math.max(0, nowSec - curr.receivedAt), MAX_EXTRAPOLATION_SEC);
+          const overshootSec = Math.min(sinceUpdate - GLIDE_DURATION_SEC, MAX_EXTRAPOLATION_SEC);
           if (curr.bearing != null && vehicle.speed && vehicle.speed > 0.5 && overshootSec > 0) {
             [lat, lon] = projectForward(curr.lat, curr.lon, curr.bearing, vehicle.speed, overshootSec);
           } else {
