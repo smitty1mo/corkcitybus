@@ -69,6 +69,42 @@ export function projectForward(
   return [lat + dLat, lon + dLon];
 }
 
+/**
+ * Projects point p onto the segment a->b using a local planar (equirectangular)
+ * approximation around `a` - accurate enough for the few-hundred-metre spacing
+ * between consecutive bus stops. Returns the *unclamped* fraction along the
+ * segment (negative before a, >1 past b) so callers can tell whether p falls
+ * before the segment even starts, plus the distance in metres to the nearest
+ * point actually on the segment.
+ */
+export function projectOntoSegment(
+  lat: number,
+  lon: number,
+  aLat: number,
+  aLon: number,
+  bLat: number,
+  bLon: number
+): { t: number; distanceMeters: number } {
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos((aLat * Math.PI) / 180);
+
+  const bx = (bLon - aLon) * mPerDegLon;
+  const by = (bLat - aLat) * mPerDegLat;
+  const px = (lon - aLon) * mPerDegLon;
+  const py = (lat - aLat) * mPerDegLat;
+
+  const abLenSq = bx * bx + by * by;
+  const t = abLenSq > 0 ? (px * bx + py * by) / abLenSq : 0;
+  const tClamped = Math.max(0, Math.min(1, t));
+
+  const projX = bx * tClamped;
+  const projY = by * tClamped;
+  const dx = px - projX;
+  const dy = py - projY;
+
+  return { t, distanceMeters: Math.sqrt(dx * dx + dy * dy) };
+}
+
 export function bearingBetween(
   lat1: number,
   lon1: number,

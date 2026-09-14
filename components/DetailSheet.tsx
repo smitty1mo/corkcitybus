@@ -193,7 +193,7 @@ function StopDetail({
   onClose: () => void;
 }) {
   const stop = staticData.stops.find((s) => s.id === stopId);
-  const arrivals = getUpcomingArrivalsForStop(stopId, vehicles);
+  const arrivals = getUpcomingArrivalsForStop(stopId, vehicles, Math.floor(now / 1000));
 
   return (
     <div className="pb-5">
@@ -259,7 +259,7 @@ function RouteDetail({
     ? getNearestStopOnRoute(routeId, userLocation.lat, userLocation.lon, staticData.stops)
     : null;
   const arrival = nearest
-    ? getUpcomingArrivalsForStop(nearest.stop.id, vehicles).find((a) => a.routeId === routeId)
+    ? getUpcomingArrivalsForStop(nearest.stop.id, vehicles, Math.floor(now / 1000), routeId)[0]
     : undefined;
 
   return (

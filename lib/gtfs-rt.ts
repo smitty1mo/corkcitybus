@@ -1,7 +1,9 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import { getCorkRouteIds, getRoutePattern, getStopCoords, loadCorkStaticData } from "./gtfs-static-server";
-import { isNearDepot, haversineMeters } from "./geo";
-import type { LiveVehicle, PredictedStopArrival } from "./types";
+import { isNearDepot, haversineMeters, projectOntoSegment } from "./geo";
+import type { LiveVehicle, PredictedStopArrival, RoutePatternStop } from "./types";
+
+const { VehicleStopStatus } = GtfsRealtimeBindings.transit_realtime.VehiclePosition;
 
 const VEHICLE_POSITIONS_URL = "https://api.nationaltransport.ie/gtfsr/v2/Vehicles";
 const TRIP_UPDATES_URL = "https://api.nationaltransport.ie/gtfsr/v2/TripUpdates";
@@ -91,11 +93,60 @@ function estimatedSpeed(reportedSpeedMps: number | null | undefined): number {
   return DEFAULT_SPEED_MPS;
 }
 
+/**
+ * Map-matches the vehicle onto the ordered stop sequence rather than just
+ * picking the single nearest stop by straight-line distance: the nearest
+ * stop by air distance can easily be the one the bus just left (behind it)
+ * rather than the one it's heading toward, especially with closely-spaced
+ * stops. Instead, find which stop-to-stop segment the vehicle's position
+ * projects onto and return the far end of that segment - since pattern
+ * stops are already ordered in the direction of travel, that's always the
+ * stop ahead of the bus, not behind it.
+ */
+function findNextStopIndexByPosition(
+  patternStops: RoutePatternStop[],
+  stopCoords: Map<string, { lat: number; lon: number }>,
+  vehicleLat: number,
+  vehicleLon: number
+): number {
+  const coords = patternStops
+    .map((s, idx) => ({ idx, coord: stopCoords.get(s.stopId) }))
+    .filter((s): s is { idx: number; coord: { lat: number; lon: number } } => s.coord != null);
+
+  if (coords.length === 0) return 0;
+  if (coords.length === 1) return coords[0].idx;
+
+  let bestDist = Infinity;
+  let bestNextIdx = coords[coords.length - 1].idx;
+
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a = coords[i];
+    const b = coords[i + 1];
+    const { t, distanceMeters } = projectOntoSegment(
+      vehicleLat,
+      vehicleLon,
+      a.coord.lat,
+      a.coord.lon,
+      b.coord.lat,
+      b.coord.lon
+    );
+    if (distanceMeters < bestDist) {
+      bestDist = distanceMeters;
+      // Projects before the very first segment starts - the bus hasn't
+      // reached the first stop yet, so that's the next one, not the second.
+      bestNextIdx = i === 0 && t < 0 ? a.idx : b.idx;
+    }
+  }
+
+  return bestNextIdx;
+}
+
 function resolveNextStops(
   routeId: string,
   directionId: string,
   currentStopSequence: number | null,
   currentStopId: string | null,
+  currentStatus: number | null,
   tripUpdate: TripUpdateInfo | undefined,
   vehicleLat: number,
   vehicleLon: number,
@@ -112,6 +163,11 @@ function resolveNextStops(
     const pattern = getRoutePattern(routeId, directionId);
     if (!pattern || pattern.stops.length === 0) return [];
 
+    // A hinted stop (from current_stop_id/current_stop_sequence) is the one
+    // the bus is *at or approaching* per current_status - if it's already
+    // STOPPED_AT that stop, the next one to show is the one after it.
+    const alreadyStopped = currentStatus === VehicleStopStatus.STOPPED_AT;
+
     // stop_sequence is 1-based in GTFS, so 0 means "not provided" rather
     // than "the first stop" - trusting it here previously showed the very
     // start of the route as the "next stop" for any vehicle whose feed
@@ -119,27 +175,17 @@ function resolveNextStops(
     let startIdx: number | null = null;
     if (currentStopId) {
       const idx = pattern.stops.findIndex((s) => s.stopId === currentStopId);
-      if (idx >= 0) startIdx = idx;
+      if (idx >= 0) startIdx = alreadyStopped ? Math.min(idx + 1, pattern.stops.length - 1) : idx;
     }
     if (startIdx === null && currentStopSequence !== null && currentStopSequence > 0) {
-      startIdx = Math.max(0, Math.min(pattern.stops.length - 1, currentStopSequence - 1));
+      const idx = Math.max(0, Math.min(pattern.stops.length - 1, currentStopSequence - 1));
+      startIdx = alreadyStopped ? Math.min(idx + 1, pattern.stops.length - 1) : idx;
     }
     if (startIdx === null) {
-      // No usable position hint from the feed at all - fall back to the
-      // pattern stop closest to the vehicle's live GPS position rather
-      // than defaulting to the start of the route.
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      pattern.stops.forEach((s, i) => {
-        const c = stopCoords.get(s.stopId);
-        if (!c) return;
-        const d = haversineMeters(vehicleLat, vehicleLon, c.lat, c.lon);
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = i;
-        }
-      });
-      startIdx = bestIdx;
+      // No usable position hint from the feed at all - map-match the
+      // vehicle's live GPS position onto the ordered stop sequence instead
+      // of defaulting to the start of the route.
+      startIdx = findNextStopIndexByPosition(pattern.stops, stopCoords, vehicleLat, vehicleLon);
     }
 
     upcoming = pattern.stops
@@ -201,6 +247,7 @@ export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVe
     const directionId = v.trip?.directionId != null ? String(v.trip.directionId) : "0";
     const currentStopSequence = v.currentStopSequence ?? null;
     const currentStopId = v.stopId ?? null;
+    const currentStatus = v.currentStatus ?? null;
     const timestamp = toUnixSeconds(v.timestamp) ?? nowUnix;
     const speed = v.position.speed ?? null;
 
@@ -210,6 +257,7 @@ export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVe
       directionId,
       currentStopSequence,
       currentStopId,
+      currentStatus,
       tripUpdate,
       lat,
       lon,
