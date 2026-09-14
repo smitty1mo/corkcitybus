@@ -1,5 +1,11 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
-import { getCorkRouteIds, getRoutePattern, getStopCoords, loadCorkStaticData } from "./gtfs-static-server";
+import {
+  getCorkRouteIds,
+  getPatternForTrip,
+  getRoutePattern,
+  getStopCoords,
+  loadCorkStaticData,
+} from "./gtfs-static-server";
 import { isNearDepot, haversineMeters, projectOntoSegment } from "./geo";
 import type { LiveVehicle, PredictedStopArrival, RoutePatternStop } from "./types";
 
@@ -93,6 +99,13 @@ function estimatedSpeed(reportedSpeedMps: number | null | undefined): number {
   return DEFAULT_SPEED_MPS;
 }
 
+// A bus genuinely in service on a pattern should be within a few hundred
+// metres of it. Past this, treat the vehicle as not actually on the route
+// yet (e.g. deadheading out from a depot to a long rural trip's start
+// point) rather than map-matching it to whatever segment happens to be
+// least-far-away - which can be an arbitrary, misleadingly specific stop.
+const MAX_SANE_MATCH_DISTANCE_METERS = 1500;
+
 /**
  * Map-matches the vehicle onto the ordered stop sequence rather than just
  * picking the single nearest stop by straight-line distance: the nearest
@@ -138,10 +151,17 @@ function findNextStopIndexByPosition(
     }
   }
 
+  if (bestDist > MAX_SANE_MATCH_DISTANCE_METERS) {
+    // Not clearly on this pattern at all - assume it hasn't started yet
+    // rather than reporting an arbitrary far-off "next stop".
+    return coords[0].idx;
+  }
+
   return bestNextIdx;
 }
 
 function resolveNextStops(
+  tripId: string | null,
   routeId: string,
   directionId: string,
   currentStopSequence: number | null,
@@ -160,7 +180,12 @@ function resolveNextStops(
   if (tripUpdate && tripUpdate.stops.length > 0) {
     upcoming = tripUpdate.stops;
   } else {
-    const pattern = getRoutePattern(routeId, directionId);
+    // A route/direction can have several genuinely different stop-sequence
+    // variants (branch skips, short-workings, express patterns) - prefer
+    // the exact one this trip follows over the route/direction's generic
+    // default, otherwise map-matching can snap to a stop on a different
+    // branch entirely.
+    const pattern = (tripId && getPatternForTrip(tripId)) ?? getRoutePattern(routeId, directionId);
     if (!pattern || pattern.stops.length === 0) return [];
 
     // A hinted stop (from current_stop_id/current_stop_sequence) is the one
@@ -253,6 +278,7 @@ export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVe
 
     const tripUpdate = tripId ? tripUpdates.get(tripId) : undefined;
     const nextStops = resolveNextStops(
+      tripId,
       routeId,
       directionId,
       currentStopSequence,

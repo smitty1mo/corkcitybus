@@ -33,16 +33,39 @@ export function getStopCoords(): Map<string, { lat: number; lon: number }> {
   return stopCoordsCache;
 }
 
-let patternIndexCache: Map<string, RoutePattern> | null = null;
+let patternByIdCache: Map<string, RoutePattern> | null = null;
+let defaultPatternByRouteDirCache: Map<string, RoutePattern> | null = null;
 
-/** Ordered stops (with scheduled offset seconds) for a (routeId, directionId) pair. */
-export function getRoutePattern(routeId: string, directionId: string): RoutePattern | undefined {
-  if (!patternIndexCache) {
-    const data = loadCorkStaticData();
-    patternIndexCache = new Map();
-    for (const p of data.routePatterns) {
-      patternIndexCache.set(`${p.routeId}|${p.directionId}`, p);
-    }
+function ensurePatternIndexes(): void {
+  if (patternByIdCache && defaultPatternByRouteDirCache) return;
+  const data = loadCorkStaticData();
+  patternByIdCache = new Map();
+  defaultPatternByRouteDirCache = new Map();
+  for (const p of data.routePatterns) {
+    patternByIdCache.set(p.patternId, p);
+    // routePatterns lists each (routeId, directionId)'s variants most-used
+    // first (see build-gtfs-data.mjs), so the first one seen per key is the
+    // best default when a specific trip's exact pattern isn't known.
+    const key = `${p.routeId}|${p.directionId}`;
+    if (!defaultPatternByRouteDirCache.has(key)) defaultPatternByRouteDirCache.set(key, p);
   }
-  return patternIndexCache.get(`${routeId}|${directionId}`);
+}
+
+/**
+ * The exact stop-sequence variant a specific trip follows, when we have
+ * static schedule data for it - a route/direction can have several distinct
+ * variants (branch skips, short-workings), so this is the reliable path.
+ */
+export function getPatternForTrip(tripId: string): RoutePattern | undefined {
+  ensurePatternIndexes();
+  const patternId = loadCorkStaticData().tripPatterns[tripId];
+  if (!patternId) return undefined;
+  return patternByIdCache!.get(patternId);
+}
+
+/** The most common stop-sequence variant for a (routeId, directionId) pair - a
+ * fallback for when the live trip_id isn't found in the bundled static data. */
+export function getRoutePattern(routeId: string, directionId: string): RoutePattern | undefined {
+  ensurePatternIndexes();
+  return defaultPatternByRouteDirCache!.get(`${routeId}|${directionId}`);
 }

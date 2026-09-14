@@ -29,6 +29,8 @@ export interface RoutePatternStop {
 }
 
 export interface RoutePattern {
+  /** Unique id for this specific stop-sequence variant (see tripPatterns). */
+  patternId: string;
   routeId: string;
   directionId: string;
   stops: RoutePatternStop[];
@@ -40,7 +42,17 @@ export interface CorkStaticData {
   routes: StaticRoute[];
   stops: StaticStop[];
   shapes: StaticShape[];
+  /**
+   * Every distinct stop-sequence variant seen for each (routeId, directionId)
+   * - branch skips, short-workings and express patterns each get their own
+   * entry rather than being collapsed into one "representative" pattern, so
+   * a live vehicle can be matched against the exact stop list its specific
+   * trip actually follows.
+   */
   routePatterns: RoutePattern[];
+  /** Maps a static GTFS trip_id (shared with the live feed's trip_id) to the
+   * exact routePatterns[].patternId it follows. */
+  tripPatterns: Record<string, string>;
 }
 
 // Live data (from /api/live, derived from GTFS-Realtime)

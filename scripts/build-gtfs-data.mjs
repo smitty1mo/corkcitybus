@@ -268,39 +268,56 @@ async function main() {
     });
   }
 
-  // Compact per-route, per-direction ordered stop pattern - used both to
-  // find "next stop after current" along a route, and (via offsetSec) to
-  // turn the live feed's schedule *delay* into a real predicted clock time:
-  // the NTA TripUpdates feed gives stop_time_update.arrival.delay (seconds
-  // vs. schedule) rather than an absolute time, so we need each stop's
-  // scheduled offset from the trip's start_time to reconstruct it.
+  // Every distinct stop-sequence variant per (routeId, directionId) - NOT
+  // collapsed to one "representative" trip. Route/direction pairs commonly
+  // cover several genuinely different calling patterns (branch skips, short
+  // workings, express variants), and a live vehicle running one of the
+  // less-common variants needs to be matched against its *own* stop list,
+  // not a merged guess - otherwise map-matching can snap to a stop that's
+  // kilometres away on a totally different branch. offsetSec (scheduled
+  // seconds after the trip's start_time) is kept per stop for potential
+  // future schedule-based ETA use, though it's not consumed today.
   function toSeconds(hms) {
     const [h, m, s] = hms.split(":").map(Number);
     return h * 3600 + m * 60 + s;
   }
   const patternKey = (routeId, directionId) => `${routeId}|${directionId}`;
-  const bestPatternTrip = new Map(); // key -> {tripId, stopCount}
+  // key -> signature (stopId sequence, joined) -> { stopIds, tripIds }
+  const variantsByKey = new Map();
   for (const t of finalTrips.values()) {
     const sts = stopTimesByTrip.get(t.tripId);
-    if (!sts) continue;
+    if (!sts || sts.length === 0) continue;
+    const sorted = sts.slice().sort((a, b) => a.seq - b.seq);
     const key = patternKey(t.routeId, t.directionId);
-    const existing = bestPatternTrip.get(key);
-    if (!existing || sts.length > existing.stopCount) {
-      bestPatternTrip.set(key, { tripId: t.tripId, stopCount: sts.length });
+    const signature = sorted.map((s) => s.stopId).join(">");
+    if (!variantsByKey.has(key)) variantsByKey.set(key, new Map());
+    const variants = variantsByKey.get(key);
+    if (!variants.has(signature)) {
+      variants.set(signature, { sts: sorted, tripIds: [] });
     }
+    variants.get(signature).tripIds.push(t.tripId);
   }
+
   const routePatterns = [];
-  for (const [key, { tripId }] of bestPatternTrip) {
+  const tripPatterns = {};
+  for (const [key, variants] of variantsByKey) {
     const [routeId, directionId] = key.split("|");
-    const sts = stopTimesByTrip.get(tripId).slice().sort((a, b) => a.seq - b.seq);
-    const tripStartSec = toSeconds(sts[0].dep);
-    routePatterns.push({
-      routeId,
-      directionId,
-      stops: sts.map((s) => ({
-        stopId: s.stopId,
-        offsetSec: toSeconds(s.arr) - tripStartSec,
-      })),
+    // Most-used variant first, so index 0 is the best default when a live
+    // trip_id isn't found in tripPatterns (e.g. stale schedule data).
+    const sorted = [...variants.values()].sort((a, b) => b.tripIds.length - a.tripIds.length);
+    sorted.forEach((variant, idx) => {
+      const patternId = `${key}#${idx}`;
+      const tripStartSec = toSeconds(variant.sts[0].dep);
+      routePatterns.push({
+        patternId,
+        routeId,
+        directionId,
+        stops: variant.sts.map((s) => ({
+          stopId: s.stopId,
+          offsetSec: toSeconds(s.arr) - tripStartSec,
+        })),
+      });
+      for (const tripId of variant.tripIds) tripPatterns[tripId] = patternId;
     });
   }
 
@@ -313,6 +330,7 @@ async function main() {
     stops: stopsRounded,
     shapes: shapesOut,
     routePatterns,
+    tripPatterns,
   };
 
   fs.mkdirSync(OUT, { recursive: true });
@@ -322,7 +340,8 @@ async function main() {
   console.log("Routes:", routesOut.length);
   console.log("Stops:", stopsRounded.length);
   console.log("Shapes:", shapesOut.length, "(deduped from", shapeIdsByRoute.size ? [...shapeIdsByRoute.values()].reduce((a, s) => a + s.size, 0) : 0, ")");
-  console.log("Route patterns:", routePatterns.length);
+  console.log("Route patterns (distinct stop-sequence variants):", routePatterns.length);
+  console.log("Trips mapped to a pattern:", Object.keys(tripPatterns).length);
   const clientSize = fs.statSync(path.join(OUT, "cork-static.json")).size;
   console.log(`cork-static.json: ${(clientSize / 1024).toFixed(0)} KB`);
   console.log("Route list:", routesOut.map((r) => r.shortName).join(", "));
