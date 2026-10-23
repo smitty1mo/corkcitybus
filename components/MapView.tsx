@@ -9,11 +9,13 @@ import Link from "next/link";
 import { useStaticData } from "@/lib/useStaticData";
 import { useLiveVehicles } from "@/lib/useLiveVehicles";
 import { useGeolocation } from "@/lib/useGeolocation";
+import { useIconScale } from "@/lib/useIconScale";
 import { assignRouteColors } from "@/lib/colors";
 import { CORK_MAP_BBOX, STALE_VEHICLE_AFTER_SECONDS } from "@/lib/constants";
 import { interpolateLatLon, interpolateBearing, bearingBetween, projectForward } from "@/lib/geo";
 import type { Selection } from "@/lib/types";
 import RouteFilterSheet from "./RouteFilterSheet";
+import SettingsSheet from "./SettingsSheet";
 import DetailSheet from "./DetailSheet";
 import StatusBanner from "./StatusBanner";
 
@@ -30,10 +32,29 @@ const GLIDE_DURATION_SEC = 4;
 // the UI has already flagged it as stale (dimmed) anyway.
 const MAX_EXTRAPOLATION_SEC = 150;
 
+// Base bus icon size/label text size at user scale 1x - multiplied linearly
+// by the user's chosen accessibility scale (see useIconScale) so the icon
+// and its route-number label always grow or shrink together.
+function busIconSizeExpr(userScale: number) {
+  return [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    11,
+    0.72 * userScale,
+    15,
+    1.02 * userScale,
+    18,
+    1.26 * userScale,
+  ];
+}
+const BASE_LABEL_TEXT_SIZE = 10;
+
 export default function MapView() {
   const { data } = useStaticData();
   const { animRef, meta, version } = useLiveVehicles();
   const geo = useGeolocation();
+  const { scale: iconScale, setScale: setIconScale } = useIconScale();
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -215,7 +236,17 @@ export default function MapView() {
       source: "buses",
       layout: {
         "icon-image": "bus-icon",
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 11, 0.72, 15, 1.02, 18, 1.26],
+        "icon-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          11,
+          0.72 * iconScale,
+          15,
+          1.02 * iconScale,
+          18,
+          1.26 * iconScale,
+        ],
         "icon-rotate": ["get", "bearing"],
         "icon-rotation-alignment": "map",
         "icon-allow-overlap": true,
@@ -235,7 +266,7 @@ export default function MapView() {
       source: "buses",
       layout: {
         "text-field": ["get", "shortName"],
-        "text-size": 10,
+        "text-size": BASE_LABEL_TEXT_SIZE * iconScale,
         "text-font": ["Noto Sans Bold"],
         "text-allow-overlap": true,
         "text-ignore-placement": true,
@@ -272,6 +303,15 @@ export default function MapView() {
       map.getCanvas().style.cursor = features.length > 0 ? "pointer" : "";
     });
   }
+
+  // ---- Keep bus icon/label size in sync with the user's accessibility setting ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !sourcesReadyRef.current) return;
+    if (!map.getLayer("buses-icon") || !map.getLayer("buses-label")) return;
+    map.setLayoutProperty("buses-icon", "icon-size", busIconSizeExpr(iconScale));
+    map.setLayoutProperty("buses-label", "text-size", BASE_LABEL_TEXT_SIZE * iconScale);
+  }, [iconScale]);
 
   // ---- Update route/stop sources when filter selection changes ----
   const visibleRouteLineIds = useMemo(() => {
@@ -473,15 +513,18 @@ export default function MapView() {
           <BackGlyph className="h-5 w-5" />
         </Link>
 
-        {data && (
-          <RouteFilterSheet
-            routes={data.routes}
-            colors={colors}
-            selected={selectedRouteIds}
-            activeRouteIds={activeRouteIds}
-            onChange={setSelectedRouteIds}
-          />
-        )}
+        <div className="flex items-center gap-2">
+          <SettingsSheet scale={iconScale} onChange={setIconScale} />
+          {data && (
+            <RouteFilterSheet
+              routes={data.routes}
+              colors={colors}
+              selected={selectedRouteIds}
+              activeRouteIds={activeRouteIds}
+              onChange={setSelectedRouteIds}
+            />
+          )}
+        </div>
       </div>
 
       {meta.loaded && meta.stale && <StatusBanner lastSuccessAt={meta.lastSuccessAt} />}
