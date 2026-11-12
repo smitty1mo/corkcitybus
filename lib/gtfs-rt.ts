@@ -243,7 +243,24 @@ function resolveNextStops(
   return results;
 }
 
-export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVehicle[]> {
+// If the live feed is clearly populated nationally (NTA sends positions for
+// the whole Bus Eireann fleet, not just Cork) but not one of those vehicles'
+// route_ids matches our bundled Cork route list, that's a strong signal the
+// bundled static dataset is stale rather than "no buses are running" - e.g.
+// NTA reissuing the static GTFS feed with a different route_id format/
+// delimiter, as happened in November 2026. Surfaced via FetchResult below so
+// the API route can turn it into a visible warning instead of a silent,
+// unexplained empty bus list.
+const MIN_FEED_ENTITIES_FOR_MISMATCH_CHECK = 15;
+
+export interface FetchVehiclesResult {
+  vehicles: LiveVehicle[];
+  /** True when the feed clearly has live vehicles with route_ids, but none
+   * of them matched our bundled Cork route set - likely a stale dataset. */
+  datasetMismatch: boolean;
+}
+
+export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<FetchVehiclesResult> {
   const [vehicleBytes, tripUpdates] = await Promise.all([
     fetchProtobuf(VEHICLE_POSITIONS_URL, apiKey),
     fetchTripUpdates(apiKey).catch(() => new Map<string, TripUpdateInfo>()),
@@ -255,6 +272,7 @@ export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVe
   const nowUnix = Math.floor(Date.now() / 1000);
 
   const vehicles: LiveVehicle[] = [];
+  let entitiesWithRouteId = 0;
 
   for (const entity of feed.entity) {
     const v = entity.vehicle;
@@ -264,6 +282,7 @@ export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVe
     const lat = v.position.latitude;
     const lon = v.position.longitude;
 
+    if (routeId) entitiesWithRouteId++;
     if (!routeId || !corkRouteIds.has(routeId)) continue;
     if (lat < bbox.minLat || lat > bbox.maxLat || lon < bbox.minLon || lon > bbox.maxLon) continue;
     if (isNearDepot(lat, lon)) continue;
@@ -306,5 +325,8 @@ export async function fetchAndFilterCorkVehicles(apiKey: string): Promise<LiveVe
     });
   }
 
-  return vehicles;
+  const datasetMismatch =
+    entitiesWithRouteId >= MIN_FEED_ENTITIES_FOR_MISMATCH_CHECK && vehicles.length === 0;
+
+  return { vehicles, datasetMismatch };
 }

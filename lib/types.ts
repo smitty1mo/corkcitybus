@@ -90,5 +90,10 @@ export interface LiveFeedResponse {
   lastSuccessAt: number; // unix seconds - when live data was last fetched successfully from NTA
   stale: boolean; // true if the current payload is a previously cached success (live fetch just failed)
   error: string | null;
+  /** True when the live feed is clearly populated nationally but none of its
+   * vehicles matched our bundled Cork route list - almost always means the
+   * bundled static GTFS dataset is stale (e.g. NTA changed route_id format)
+   * and needs regenerating, rather than "no buses are running". */
+  datasetMismatch: boolean;
   vehicles: LiveVehicle[];
 }

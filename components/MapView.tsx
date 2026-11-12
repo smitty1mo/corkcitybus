@@ -528,6 +528,12 @@ export default function MapView() {
       </div>
 
       {meta.loaded && meta.stale && <StatusBanner lastSuccessAt={meta.lastSuccessAt} />}
+      {meta.loaded && !meta.stale && meta.datasetMismatch && (
+        <StatusBanner
+          lastSuccessAt={meta.lastSuccessAt}
+          message="No buses matched — route data may be out of date"
+        />
+      )}
 
       {geo.status === "denied" && (
         <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center px-4">

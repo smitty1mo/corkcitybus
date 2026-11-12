@@ -15,6 +15,7 @@ let cachedVehicles: LiveVehicle[] | null = null;
 let lastSuccessAt: number | null = null; // unix seconds
 let lastAttemptAt = 0; // ms, Date.now()
 let lastError: string | null = null;
+let datasetMismatch = false;
 let inFlight: Promise<void> | null = null;
 
 async function refreshIfDue(): Promise<void> {
@@ -30,8 +31,9 @@ async function refreshIfDue(): Promise<void> {
       if (!apiKey) {
         throw new Error("NTA_API_KEY is not configured on the server");
       }
-      const vehicles = await fetchAndFilterCorkVehicles(apiKey);
-      cachedVehicles = vehicles;
+      const result = await fetchAndFilterCorkVehicles(apiKey);
+      cachedVehicles = result.vehicles;
+      datasetMismatch = result.datasetMismatch;
       lastSuccessAt = Math.floor(Date.now() / 1000);
       lastError = null;
     } catch (err) {
@@ -52,6 +54,7 @@ export async function GET() {
     lastSuccessAt: lastSuccessAt ?? 0,
     stale: lastError !== null && cachedVehicles !== null,
     error: lastError,
+    datasetMismatch,
     vehicles: cachedVehicles ?? [],
   };
 

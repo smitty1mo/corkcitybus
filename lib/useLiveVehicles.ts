@@ -30,6 +30,7 @@ export interface LiveMeta {
   lastSuccessAt: number;
   stale: boolean;
   error: string | null;
+  datasetMismatch: boolean;
   loaded: boolean;
 }
 
@@ -38,6 +39,7 @@ export function useLiveVehicles() {
     lastSuccessAt: 0,
     stale: false,
     error: null,
+    datasetMismatch: false,
     loaded: false,
   });
   const animRef = useRef<Map<string, VehicleAnim>>(new Map());
@@ -80,6 +82,7 @@ export function useLiveVehicles() {
           lastSuccessAt: data.lastSuccessAt,
           stale: data.stale,
           error: data.error,
+          datasetMismatch: data.datasetMismatch,
           loaded: true,
         });
         setVersion((v) => v + 1);
